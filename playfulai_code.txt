@@ -1,0 +1,116 @@
+import os
+import chess
+import streamlit as st
+import google.generativeai as genai
+from dotenv import load_dotenv
+from chess.svg import board as chess_svg
+import base64
+
+# Load API key from environment variables
+load_dotenv()
+api_key = os.getenv("AIzaSyDLM2WKSHVHkcVoXyojCxPw6nFGxMYcAJg")
+if api_key:
+    genai.configure(api_key=api_key)
+else:
+    st.error("API Key not found! Please set GEMINI_API_KEY as an environment variable.")
+
+# Function to get AI move from Gemini
+def get_gemini_move(board_fen):
+    """Use Google Gemini AI to suggest the best chess move."""
+    prompt = (
+        f"Suggest the next best move for this chess position: {board_fen}. "
+        f"Provide only the move in UCI format (e.g., e2e4, g8f6). "
+        f"Do NOT include any text other than the move itself."
+    )
+
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    response = model.generate_content(prompt)
+    
+    # Extract only the move (first word, in case AI returns extra text)
+    ai_move = response.text.strip().split()[0]  
+
+    # Validate if AI move is in correct UCI format
+    if chess.Move.from_uci(ai_move) not in board.legal_moves:
+        print("Invalid AI move received, retrying...")
+        return get_gemini_move(board_fen)  # Retry AI move
+
+    return ai_move
+
+# Function to evaluate user level
+def evaluate_user_level(move_history):
+    if len(move_history) < 5:
+        return "Beginner"
+    elif len(move_history) > 20 and move_history[-1] in ["++", "#"]:
+        return "Advanced"
+    else:
+        return "Intermediate"
+
+# Function to display chessboard as an image
+def render_chessboard(board):
+    svg_data = chess_svg(board)
+    base64_data = base64.b64encode(svg_data.encode("utf-8")).decode("utf-8")
+    return f"data:image/svg+xml;base64,{base64_data}"
+
+# Streamlit app
+def main():
+    st.title("♟️ Chess AI with Google Gemini")
+    st.write("Play chess against an AI and get move suggestions.")
+
+    if "board" not in st.session_state:
+        st.session_state.board = chess.Board()
+    if "move_history" not in st.session_state:
+        st.session_state.move_history = []
+
+    # Display the chessboard
+    st.image(render_chessboard(st.session_state.board), use_column_width=True)
+
+    user_move = st.text_input("Enter your move (e.g., e2e4):")
+    if st.button("Make Move"):
+        try:
+            move = chess.Move.from_uci(user_move)
+            if move in st.session_state.board.legal_moves:
+                st.session_state.board.push(move)
+                st.session_state.move_history.append(user_move)
+                st.success(f"Move {user_move} played successfully!")
+            else:
+                st.error("Invalid move! Try again.")
+        except ValueError:
+            st.error("Invalid move format! Use UCI notation.")
+
+    if st.button("Get AI Move"):
+        if not st.session_state.board.is_game_over():
+            with st.spinner("AI is thinking..."):
+                ai_move = None
+                max_attempts = 3  # Try up to 3 times to get a valid move
+
+                for _ in range(max_attempts):
+                    ai_move = get_gemini_move(st.session_state.board.fen())
+                    if ai_move:
+                        break  # Stop retrying if we get a valid move
+
+                if ai_move:
+                    st.session_state.board.push(chess.Move.from_uci(ai_move))
+                    st.session_state.move_history.append(ai_move)
+                    st.success(f"AI Move: {ai_move}")
+                else:
+                    st.error("AI failed to provide a valid move after multiple attempts. Please try again.")
+        else:
+            st.error("Game is over! Restart to play again.")
+
+    difficulty = evaluate_user_level(st.session_state.move_history)
+    st.write(f"🧩 **Current difficulty level:** {difficulty}")
+
+    # Display move history
+    if st.session_state.move_history:
+        st.write("📜 **Move History:**")
+        st.write(", ".join(st.session_state.move_history))
+
+    if st.session_state.board.is_game_over():
+        st.write("🎉 **Game Over!** Result:", st.session_state.board.result())
+        if st.button("🔄 Restart Game"):
+            st.session_state.board = chess.Board()
+            st.session_state.move_history = []
+            st.experimental_rerun()
+
+if __name__ == "__main__":
+    main()
